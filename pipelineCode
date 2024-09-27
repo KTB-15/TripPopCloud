@@ -1,0 +1,64 @@
+pipeline code : pipeline {
+    agent any
+
+    environment {
+        FRONT_REPO = 'KTB-15/TripPopFrontend'
+        ECR_FRONT_REPO = '864899843417.dkr.ecr.ap-northeast-2.amazonaws.com/trippop/frontend'
+        ECR_CREDENTIALS_ID = 'ecr:ap-northeast-2:ecr_credentials_id'
+        SSH_FRONT_SERVER = 'aws_ec2_front'
+        FRONT_DEPLOY_DIR = '/home/ubuntu/app' 
+    }
+
+    stages {
+        stage('Checkout Frontend') {
+            steps {
+                git branch: 'feature/dockerfile', url: "https://github.com/${FRONT_REPO}.git"
+            }
+        }
+
+        stage('Build Frontend Docker Image') {
+            steps {
+                script {
+                    dockerImage = docker.build("${ECR_FRONT_REPO}:latest")
+                }
+            }
+        }
+
+        stage('Push Frontend to ECR') {
+            steps {
+                script {
+                    docker.withRegistry("https://${ECR_FRONT_REPO}", "$ECR_CREDENTIALS_ID") {
+                        dockerImage.push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Frontend to AWS EC2') {
+            steps {
+                sshPublisher(
+                    publishers: [
+                        sshPublisherDesc(
+                            configName: "${SSH_FRONT_SERVER}",
+                            transfers: [
+                                sshTransfer(
+                                    sourceFiles: '**/*', 
+                                    removePrefix: '',
+                                    remoteDirectory: "${FRONT_DEPLOY_DIR}",
+                                    execCommand: """
+                                    cd ${FRONT_DEPLOY_DIR}
+                                    docker stop \$(docker ps -q --filter ancestor=${ECR_FRONT_REPO}:latest) || true
+                                    docker rm \$(docker ps -aq --filter ancestor=${ECR_FRONT_REPO}:latest) || true
+                                    docker pull ${ECR_FRONT_REPO}:latest
+                                    docker run -d -p 5173:5173 ${ECR_FRONT_REPO}:latest
+                                """
+                                )
+                            ]
+                        )
+                    ]
+                )
+            }
+          }
+        }
+    }
+}
